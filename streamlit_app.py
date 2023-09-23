@@ -46,8 +46,7 @@ if st.sidebar.button("Use Suggested Guess"):
     if st.session_state.player.check_all_sunk():
         st.session_state.feedback_message = 'Congratulations, you won!'
     
-    st.experimental_rerun()
-
+    st.rerun()
 
 x_coordinate = st.sidebar.slider('Choose your X coordinate:', 0, 9, 0)
 y_coordinate = st.sidebar.slider('Choose your Y coordinate:', 0, 9, 0)
