@@ -74,7 +74,7 @@ if st.sidebar.button("Submit Guess"):
     if st.session_state.player.check_all_sunk():
         st.session_state.feedback_message = 'Congratulations, you won!'
     
-    st.experimental_rerun()
+    st.rerun()
 
 # Display the feedback message if it exists
 if hasattr(st.session_state, 'feedback_message'):
