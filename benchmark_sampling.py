@@ -10,16 +10,7 @@ def benchmark(dim=10, boards=1000):
     return time.perf_counter() - start
 
 
-def benchmark_bit(dim=10, boards=1000):
-    """Benchmark using the bitboard implementation."""
-    b = BattleshipBoard(dim=dim)
-    start = time.perf_counter()
-    b.randomBoard_bit(batch_size=boards)
-    return time.perf_counter() - start
-
-
 if __name__ == "__main__":
-    duration = benchmark()
-    print(f"Python sets: {duration:.4f}s")
-    duration = benchmark_bit()
-    print(f"Bitboards:   {duration:.4f}s")
+    for n in [1000, 5000, 10000, 50000, 100000]:
+        duration = benchmark(boards=n)
+        print(f"n={n}: {duration:.4f}s")

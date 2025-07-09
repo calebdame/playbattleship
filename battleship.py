@@ -15,6 +15,8 @@ class BattleshipBoard:
         possShipsNumDict (dict): Dictionary storing the number of possible 
             positions for each ship.
         possShipsDict (dict): Dictionary storing possible positions for each ship.
+        possShipsBitsDict (dict): Dictionary storing bitboard integers for each
+            possible ship placement. Used to speed up board sampling.
         
     Args:
         dim (int, optional): Dimension of the square board. Defaults to 10.
@@ -64,78 +66,30 @@ class BattleshipBoard:
         return bit
 
     def randomBoard(self, initial=False, names=None, batch_size=1):
-        """
-        Create random boards with ship placements. The function can be customized
-        to draw all locations jointly or individually using the `initial` and 
-        `names` arguments.
+        """Generate random boards using bitboards for overlap checks.
+
+        This method mirrors the original :meth:`randomBoard` API but internally
+        relies on bitboards for faster collision detection.  It still returns
+        sets of coordinate tuples so the rest of the code base remains
+        unchanged.
 
         Args:
             initial (bool, optional): Whether to draw all locations jointly.
                 Defaults to False.
-            names (list, optional): List of ship names to consider while building
-                the random board. If not provided, considers all ships.
+            names (list, optional): List of ship names to consider while
+                building the random board. If not provided, considers all ships.
                 Defaults to None.
             batch_size (int, optional): Number of random boards to generate.
                 Defaults to 1.
 
         Returns:
-            list: List of random boards with ship placements.
+            list: Random boards represented as sets of coordinates (or lists of
+            sets when ``initial`` is True).
         """
         if names is None:
             names = []
 
-        results, len_r = [], 0
-            
-        if initial or not names:
-            first_name, *rest_names = self.names
-            names = self.names
-        else:
-            first_name, *rest_names = names
-            
-        if self.possShipsNumDict[first_name] == 1:
-            start_l = [self.possShipsDict[name][0] for name in names if self.possShipsNumDict[name]==1]
-            rest_names = [name for name in names if self.possShipsNumDict[name]!=1]
-            start_t = set.union(*start_l)
-            
-            while len_r < batch_size:
-                while 1:
-                    end, l, t = True, list(start_l), start_t
-                    for name in rest_names:
-                        k = self.possShipsDict[name][int(self.possShipsNumDict[name]*random.random())]
-                        if bool(k & t):
-                            end = False
-                            break 
-                        t = t | k
-                        l.append(k)
-                    if end:
-                        results.append(l if initial else t)
-                        len_r += 1
-                        break
-        else:
-            while len_r < batch_size:
-                while True:
-                    end, l, t = True, [], self.possShipsDict[first_name][int(self.possShipsNumDict[first_name]*random.random())]
-                    l.append(t)
-                    for name in rest_names:
-                        k = self.possShipsDict[name][int(self.possShipsNumDict[name]*random.random())]
-                        if bool(k & t):
-                            end = False
-                            break
-                        t = t | k
-                        l.append(k)
-                    if end:
-                        results.append(l if initial else t)
-                        len_r += 1
-                        break
-
-        return results
-
-    def randomBoard_bit(self, initial=False, names=None, batch_size=1):
-        """Variant of ``randomBoard`` that operates on bitboards for speed."""
-        if names is None:
-            names = []
-
-        results, len_r = [], 0
+        results = []
 
         if initial or not names:
             first_name, *rest_names = self.names
@@ -143,47 +97,57 @@ class BattleshipBoard:
         else:
             first_name, *rest_names = names
 
-        bits_dict = self.possShipsBitsDict
+        bits = self.possShipsBitsDict
+        sets = self.possShipsDict
 
         if self.possShipsNumDict[first_name] == 1:
-            start_b = [bits_dict[name][0] for name in names if self.possShipsNumDict[name] == 1]
+            start_idx = [0 for name in names if self.possShipsNumDict[name] == 1]
+            start_sets = [sets[name][0] for name in names if self.possShipsNumDict[name] == 1]
+            start_bits = [bits[name][0] for name in names if self.possShipsNumDict[name] == 1]
             rest_names = [name for name in names if self.possShipsNumDict[name] != 1]
             start_t = 0
-            for b in start_b:
+            for b in start_bits:
                 start_t |= b
 
-            while len_r < batch_size:
+            while len(results) < batch_size:
                 while True:
-                    end, l, t = True, list(start_b), start_t
+                    end = True
+                    t_bit = start_t
+                    cur_sets = list(start_sets)
                     for name in rest_names:
-                        k = bits_dict[name][int(self.possShipsNumDict[name] * random.random())]
-                        if k & t:
+                        idx = int(self.possShipsNumDict[name] * random.random())
+                        k_bit = bits[name][idx]
+                        if k_bit & t_bit:
                             end = False
                             break
-                        t |= k
-                        l.append(k)
+                        t_bit |= k_bit
+                        cur_sets.append(sets[name][idx])
                     if end:
-                        results.append(l if initial else t)
-                        len_r += 1
+                        board_set = set.union(*cur_sets)
+                        results.append(cur_sets if initial else board_set)
                         break
         else:
-            while len_r < batch_size:
+            while len(results) < batch_size:
                 while True:
-                    end, l, t = True, [], bits_dict[first_name][int(self.possShipsNumDict[first_name] * random.random())]
-                    l.append(t)
+                    end = True
+                    idx = int(self.possShipsNumDict[first_name] * random.random())
+                    t_bit = bits[first_name][idx]
+                    cur_sets = [sets[first_name][idx]]
                     for name in rest_names:
-                        k = bits_dict[name][int(self.possShipsNumDict[name] * random.random())]
-                        if k & t:
+                        idx = int(self.possShipsNumDict[name] * random.random())
+                        k_bit = bits[name][idx]
+                        if k_bit & t_bit:
                             end = False
                             break
-                        t |= k
-                        l.append(k)
+                        t_bit |= k_bit
+                        cur_sets.append(sets[name][idx])
                     if end:
-                        results.append(l if initial else t)
-                        len_r += 1
+                        board_set = set.union(*cur_sets)
+                        results.append(cur_sets if initial else board_set)
                         break
 
         return results
+
 
 class BattleshipPlayer:
     """
