@@ -10,7 +10,7 @@ class BattleshipBoard:
     
     Attributes:
         dim (int): Size of the square board (dim x dim).
-        names (tuple): Names of the ships derived from English alphabets.
+        names (tuple): Names of the ships derived from the English alphabet.
         shipLengths (dict): Dictionary mapping ship names to their lengths.
         possShipsNumDict (dict): Dictionary storing the number of possible 
             positions for each ship.
