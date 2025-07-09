@@ -5,6 +5,7 @@ from battleship import BattleshipBoard, BattleshipPlayer
 boards_sim = 25000
 
 if 'init' not in st.session_state:
+    st.session_state.player.reset()
     st.session_state.init = True
     st.session_state.guess_count = 0
     st.session_state.player = BattleshipPlayer(boards=boards_sim)
@@ -85,4 +86,5 @@ if hasattr(st.session_state, 'feedback_message'):
 st.sidebar.text(f'Guess count: {st.session_state.guess_count}')
 
 if st.sidebar.button("Reset Game"):
+    st.session_state.player.reset()
     st.session_state.init = True
