@@ -1,12 +1,13 @@
 import time
+
 from battleship import BattleshipBoard
 
 
-def benchmark(dim=10, boards=1000):
+def benchmark(dim: int = 10, boards: int = 1000) -> float:
     """Return the time to generate ``boards`` random boards."""
-    b = BattleshipBoard(dim=dim)
+    board = BattleshipBoard(dim=dim)
     start = time.perf_counter()
-    b.randomBoard(batch_size=boards)
+    board.random_board(batch_size=boards)
     return time.perf_counter() - start
 
 

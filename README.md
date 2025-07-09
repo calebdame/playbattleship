@@ -13,12 +13,12 @@ pip install -r requirements.txt
 Execute the Streamlit app:
 
 ```bash
-streamlit run streamlit_app.py
+streamlit run dev/streamlit_app.py
 ```
 
 ## How It Works
 
-`BattleshipPlayer` in `battleship.py` repeatedly generates random boards that respect the hits and misses so far. The method [`generate_random_boards`](battleship.py#L163-L175) filters previously generated boards and adds new samples. The most common tile across these boards is picked in [`take_turn`](battleship.py#L203-L215). This Monte‑Carlo sampling uses the number defined by `boards_sim` in [`streamlit_app.py`](streamlit_app.py#L4-L12).
+`BattleshipPlayer` in `battleship.py` repeatedly generates random boards that respect the hits and misses so far. The method [`generate_random_boards`](battleship.py#L192-L205) filters previously generated boards and adds new samples. The most common tile across these boards is picked in [`take_turn`](battleship.py#L224-L238). This Monte‑Carlo sampling uses the number defined by `boards_sim` in [`streamlit_app.py`](dev/streamlit_app.py#L4-L12).
 
 ## Codespaces
 
