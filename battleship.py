@@ -46,6 +46,10 @@ class BattleshipBoard:
         in dictionaries.
         """
         self.poss_ships_num, self.poss_ships = {}, {}
+        # Store placements as integers so later operations can rely on fast
+        # bitwise arithmetic instead of slower Python set operations.  This
+        # avoids heavyweight NumPy dependencies while still providing
+        # efficient overlap checks during Monte-Carlo sampling.
         self.poss_ship_bits = {}
         dim_range = range(self.dim)
         
@@ -68,7 +72,12 @@ class BattleshipBoard:
             self.poss_ships_num[name] = len(placements)
 
     def coords_to_bit(self, coords: Iterable[Tuple[int, int]]) -> int:
-        """Convert a placement set to a bitboard integer."""
+        """Convert a placement set to a bitboard integer.
+
+        Using an integer avoids Python set intersections when checking ship
+        collisions.  Each bit corresponds to a tile, so overlapping ships can be
+        detected via bitwise AND operations.
+        """
         bit = 0
         for x, y in coords:
             bit |= 1 << (x * self.dim + y)
@@ -112,6 +121,10 @@ class BattleshipBoard:
             first_name, *rest_names = names
 
         bits = self.poss_ship_bits
+        # We keep the original set representation for readability but rely on
+        # the integer bitboards above for collision checks.  This approach was
+        # chosen instead of numpy vectorisation because bit operations on ints
+        # are significantly faster and require no additional dependencies.
         sets = self.poss_ships
 
         if self.poss_ships_num[first_name] == 1:
@@ -223,10 +236,12 @@ class BattleshipPlayer:
         self.num_hits = 0
 
     def generate_random_boards(self) -> None:
-        """
-        Generate random boards based on the current game state, considering
-        hits and misses. Random boards are used to make educated guesses in
-        future turns.
+        """Refresh the Monte-Carlo pool based on hits and misses.
+
+        Instead of recomputing the entire sample each turn, previously valid
+        boards are filtered and only the remaining count is generated.  This
+        incremental approach keeps the simulation responsive when ``n_boards``
+        is large.
         """
         if self.last_move == 1:
             self.random_boards = [
@@ -289,10 +304,11 @@ class BattleshipPlayer:
             self.board.poss_ships_num[name] = len(self.board.poss_ships[name])
 
     def take_turn(self) -> Optional[Tuple[int, int]]:
-        """
-        Take a turn by choosing the most common tile among the sampled
-        boards. This aims to make an educated guess based on the current game
-        state.
+        """Return the most likely coordinate to contain a ship.
+
+        The function tallies tile frequencies across the current Monte-Carlo
+        sample and fires at the most common unseen tile.  This simple heuristic
+        performs well for Battleship without requiring an exhaustive search.
 
         Returns:
             tuple: The chosen tile to target in the current turn.
@@ -303,7 +319,8 @@ class BattleshipPlayer:
             if tile not in self.hits and tile not in self.misses:
                 return tile
 
-        # Fallback in case all of the suggested tiles were already tried
+        # If every candidate has already been fired at, fall back to a random
+        # unseen position to guarantee progress toward game completion.
         remaining = [
             (x, y)
             for x in range(self.board.dim)
@@ -324,7 +341,9 @@ class BattleshipPlayer:
             y (int): The y-coordinate of the targeted tile.
         """
 
-        coords = (x,y)
+        coords = (x, y)
+        # Ships are stored as sets, so membership tests are O(1) and simple to
+        # reason about when updating game state.
         if coords in self.enemy_board:
             if (x,y) not in self.hits:
                 self.hits.add(coords)
@@ -359,10 +378,15 @@ class BattleshipPlayer:
         return self.num_hits == self.target_hits
     
     def reset(self) -> None:
-        """Reset the player and enemy boards to start a new game."""
+        """Reset the player and enemy boards to start a new game.
+
+        Regenerating component layouts ensures that subsequent games do not
+        reuse any state from previous rounds, keeping the sampling unbiased.
+        """
         self.board.generate_component_layouts()
         self.enemy_ships = self.board.random_board(initial=True)[0]
-        self.enemy_board = set.union(*self.enemy_ships)        self.enemy_ship_statuses = {
+        self.enemy_board = set.union(*self.enemy_ships)
+        self.enemy_ship_statuses = {
             name: {
                 'sunk': False,
                 'confirmed_pos': set(),
