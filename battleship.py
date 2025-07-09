@@ -22,7 +22,9 @@ class BattleshipBoard:
             Defaults to [5,4,3,3,2].
     """
     
-    def __init__(self, dim=10, ships=[5, 4, 3, 3, 2]):
+    def __init__(self, dim=10, ships=None):
+        if ships is None:
+            ships = [5, 4, 3, 3, 2]
         self.dim = dim
         self.names = tuple(string.ascii_lowercase[:len(ships)])
         self.shipLengths = dict(zip(self.names, ships))
@@ -144,7 +146,9 @@ class BattleshipPlayer:
         ships (list, optional): List of ship lengths. Defaults to [5, 4, 3, 3, 2].
         boards (int, optional): Number of random boards for simulations. Defaults to 10000.
     """
-    def __init__(self, dim=10, ships=[5, 4, 3, 3, 2], boards=10000):
+    def __init__(self, dim=10, ships=None, boards=10000):
+        if ships is None:
+            ships = [5, 4, 3, 3, 2]
         self.board = BattleshipBoard(dim=dim, ships=ships)
         self.enemy_ships = self.board.randomBoard(initial=True)[0]
         self.enemy_board = set.union(*self.enemy_ships)
@@ -207,8 +211,19 @@ class BattleshipPlayer:
         """
         self.generate_random_boards()
         for tile, _ in Counter(chain.from_iterable(self.random_boards)).most_common(len(self.hits) + 1)[::-1]:
-            if tile not in self.hits:
+            if tile not in self.hits and tile not in self.misses:
                 return tile
+
+        # Fallback in case all of the suggested tiles were already tried
+        remaining = [
+            (x, y)
+            for x in range(self.board.dim)
+            for y in range(self.board.dim)
+            if (x, y) not in self.hits and (x, y) not in self.misses
+        ]
+        if remaining:
+            return random.choice(remaining)
+        return None
     
     def update_game_state(self, x, y):
         """
