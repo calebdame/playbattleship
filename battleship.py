@@ -37,21 +37,31 @@ class BattleshipBoard:
         in dictionaries.
         """
         self.possShipsNumDict, self.possShipsDict = dict(), dict()
+        self.possShipsBitsDict = dict()
         dim_range = range(self.dim)
         
         for name in self.names:
             ship_length = range(self.shipLengths[name])
             dim_limit = range(self.dim - self.shipLengths[name] + 1)
             
-            self.possShipsDict[name] = [
-                {(i + temp, j) for temp in ship_length} 
+            placements = [
+                {(i + temp, j) for temp in ship_length}
                 for i in dim_limit for j in dim_range
             ] + [
-                {(j, i + temp) for temp in ship_length} 
+                {(j, i + temp) for temp in ship_length}
                 for i in dim_limit for j in dim_range
             ]
-            
-            self.possShipsNumDict[name] = len(self.possShipsDict[name])
+
+            self.possShipsDict[name] = placements
+            self.possShipsBitsDict[name] = [self.coords_to_bit(p) for p in placements]
+            self.possShipsNumDict[name] = len(placements)
+
+    def coords_to_bit(self, coords):
+        """Convert a placement set to a bitboard integer."""
+        bit = 0
+        for x, y in coords:
+            bit |= 1 << (x * self.dim + y)
+        return bit
 
     def randomBoard(self, initial=False, names=None, batch_size=1):
         """
@@ -112,6 +122,61 @@ class BattleshipBoard:
                             end = False
                             break
                         t = t | k
+                        l.append(k)
+                    if end:
+                        results.append(l if initial else t)
+                        len_r += 1
+                        break
+
+        return results
+
+    def randomBoard_bit(self, initial=False, names=None, batch_size=1):
+        """Variant of ``randomBoard`` that operates on bitboards for speed."""
+        if names is None:
+            names = []
+
+        results, len_r = [], 0
+
+        if initial or not names:
+            first_name, *rest_names = self.names
+            names = self.names
+        else:
+            first_name, *rest_names = names
+
+        bits_dict = self.possShipsBitsDict
+
+        if self.possShipsNumDict[first_name] == 1:
+            start_b = [bits_dict[name][0] for name in names if self.possShipsNumDict[name] == 1]
+            rest_names = [name for name in names if self.possShipsNumDict[name] != 1]
+            start_t = 0
+            for b in start_b:
+                start_t |= b
+
+            while len_r < batch_size:
+                while True:
+                    end, l, t = True, list(start_b), start_t
+                    for name in rest_names:
+                        k = bits_dict[name][int(self.possShipsNumDict[name] * random.random())]
+                        if k & t:
+                            end = False
+                            break
+                        t |= k
+                        l.append(k)
+                    if end:
+                        results.append(l if initial else t)
+                        len_r += 1
+                        break
+        else:
+            while len_r < batch_size:
+                while True:
+                    end, l, t = True, [], bits_dict[first_name][int(self.possShipsNumDict[first_name] * random.random())]
+                    l.append(t)
+                    for name in rest_names:
+                        k = bits_dict[name][int(self.possShipsNumDict[name] * random.random())]
+                        if k & t:
+                            end = False
+                            break
+                        t |= k
                         l.append(k)
                     if end:
                         results.append(l if initial else t)
