@@ -12,6 +12,6 @@ def benchmark(dim: int = 10, boards: int = 1000) -> float:
 
 
 if __name__ == "__main__":
-    for n in [1000, 5000, 10000, 50000, 100000]:
+    for n in [1_000, 5_000, 10_000, 50_000, 100_000, 500_000, 1_000_000]:
         duration = benchmark(boards=n)
         print(f"n={n}: {duration:.4f}s")
