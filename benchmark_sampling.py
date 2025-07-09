@@ -11,5 +11,6 @@ def benchmark(dim=10, boards=1000):
 
 
 if __name__ == "__main__":
-    duration = benchmark()
-    print(f"Python sets: {duration:.4f}s")
+    for n in [1000, 5000, 10000, 50000, 100000]:
+        duration = benchmark(boards=n)
+        print(f"n={n}: {duration:.4f}s")
