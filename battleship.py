@@ -128,7 +128,6 @@ class BattleshipBoard:
         sets = self.poss_ships
 
         if self.poss_ships_num[first_name] == 1:
-            start_idx = [0 for name in names if self.poss_ships_num[name] == 1]
             start_sets = [
                 sets[name][0]
                 for name in names
