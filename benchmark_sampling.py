@@ -4,7 +4,7 @@ from battleship import BattleshipBoard
 
 
 def benchmark(dim: int = 10, boards: int = 1000) -> float:
-    """Return the time to generate ``boards`` random boards."""
+    """Return the time to generate ``boards`` random bitboard boards."""
     board = BattleshipBoard(dim=dim)
     start = time.perf_counter()
     board.random_board(batch_size=boards)

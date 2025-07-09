@@ -24,15 +24,19 @@ def test_coords_to_bit():
     assert bits == expected
 
 
+def test_bit_to_coords():
+    board = BattleshipBoard(dim=4, ships=[2])
+    coords = board.bit_to_coords((1 << 0) | (1 << 4))
+    assert coords == {(0, 0), (1, 0)}
+
+
 def test_random_board_no_overlap():
     board = BattleshipBoard(dim=4, ships=[2, 3])
     boards = board.random_board(batch_size=5)
     for b in boards:
-        assert len(b) == 5
-        seen = set()
-        for coord in b:
-            assert coord not in seen
-            seen.add(coord)
+        coords = board.bit_to_coords(b)
+        assert len(coords) == 5
+        assert len(coords) == len(set(coords))
 
 
 def test_generate_random_boards_respects_hits_misses():
@@ -43,9 +47,11 @@ def test_generate_random_boards_respects_hits_misses():
     player.misses.add(miss)
     player.last_move = 2
     player.generate_random_boards()
-    boards_without_miss = [b for b in player.random_boards if miss not in b]
+    miss_bit = 1 << (miss[0] * player.board.dim + miss[1])
+    hit_bit = 1 << (hit[0] * player.board.dim + hit[1])
+    boards_without_miss = [b for b in player.random_boards if not (b & miss_bit)]
     assert boards_without_miss
-    assert any(hit in board for board in boards_without_miss)
+    assert any(b & hit_bit for b in boards_without_miss)
 
 
 def test_take_turn_returns_valid_coord():

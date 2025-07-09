@@ -75,7 +75,7 @@ class BattleshipBoard:
         """Convert a placement set to a bitboard integer.
 
         Using an integer avoids Python set intersections when checking ship
-        collisions.  Each bit corresponds to a tile, so overlapping ships can be
+        collisions. Each bit corresponds to a tile, so overlapping ships can be
         detected via bitwise AND operations.
         """
         bit = 0
@@ -83,31 +83,37 @@ class BattleshipBoard:
             bit |= 1 << (x * self.dim + y)
         return bit
 
+    def bit_to_coords(self, bit: int) -> Set[Tuple[int, int]]:
+        """Convert an integer bitboard back into a set of coordinates."""
+        coords = set()
+        for idx in range(self.dim * self.dim):
+            if bit & (1 << idx):
+                coords.add(divmod(idx, self.dim))
+        return coords
+
     def random_board(
         self,
         initial: bool = False,
         names: Optional[Sequence[str]] = None,
         batch_size: int = 1,
-    ) -> List[Set[Tuple[int, int]]]:
+    ) -> List[int]:
         """Generate random boards using bitboards for overlap checks.
 
-        This method mirrors the original ``random_board`` API but internally
-        relies on bitboards for faster collision detection.  It still returns
-        sets of coordinate tuples so the rest of the code base remains
-        unchanged.
+        All returned boards are integers representing occupied tiles. When
+        ``initial`` is True, each result is a list of bitboards corresponding to
+        individual ships.
 
         Args:
             initial (bool, optional): Whether to draw all locations jointly.
                 Defaults to False.
-            names (list, optional): List of ship names to consider while
-                building the random board. If not provided, considers all ships.
-                Defaults to None.
+            names (list, optional): Ship names to consider while building the
+                random board. If omitted, considers all ships. Defaults to None.
             batch_size (int, optional): Number of random boards to generate.
                 Defaults to 1.
 
         Returns:
-            list: Random boards represented as sets of coordinates (or lists of
-            sets when ``initial`` is True).
+            list: Random boards represented as bitboard integers, or lists of
+            bitboards when ``initial`` is True.
         """
         if names is None:
             names = []
@@ -121,18 +127,8 @@ class BattleshipBoard:
             first_name, *rest_names = names
 
         bits = self.poss_ship_bits
-        # We keep the original set representation for readability but rely on
-        # the integer bitboards above for collision checks.  This approach was
-        # chosen instead of numpy vectorisation because bit operations on ints
-        # are significantly faster and require no additional dependencies.
-        sets = self.poss_ships
 
         if self.poss_ships_num[first_name] == 1:
-            start_sets = [
-                sets[name][0]
-                for name in names
-                if self.poss_ships_num[name] == 1
-            ]
             start_bits = [
                 bits[name][0]
                 for name in names
@@ -149,7 +145,7 @@ class BattleshipBoard:
                 while True:
                     end = True
                     t_bit = start_t
-                    cur_sets = list(start_sets)
+                    cur_bits = list(start_bits)
                     for name in rest_names:
                         idx = int(self.poss_ships_num[name] * random.random())
                         k_bit = bits[name][idx]
@@ -157,10 +153,9 @@ class BattleshipBoard:
                             end = False
                             break
                         t_bit |= k_bit
-                        cur_sets.append(sets[name][idx])
+                        cur_bits.append(k_bit)
                     if end:
-                        board_set = set.union(*cur_sets)
-                        results.append(cur_sets if initial else board_set)
+                        results.append(cur_bits if initial else t_bit)
                         break
         else:
             while len(results) < batch_size:
@@ -168,7 +163,7 @@ class BattleshipBoard:
                     end = True
                     idx = int(self.poss_ships_num[first_name] * random.random())
                     t_bit = bits[first_name][idx]
-                    cur_sets = [sets[first_name][idx]]
+                    cur_bits = [bits[first_name][idx]]
                     for name in rest_names:
                         idx = int(self.poss_ships_num[name] * random.random())
                         k_bit = bits[name][idx]
@@ -176,10 +171,9 @@ class BattleshipBoard:
                             end = False
                             break
                         t_bit |= k_bit
-                        cur_sets.append(sets[name][idx])
+                        cur_bits.append(k_bit)
                     if end:
-                        board_set = set.union(*cur_sets)
-                        results.append(cur_sets if initial else board_set)
+                        results.append(cur_bits if initial else t_bit)
                         break
 
         return results
@@ -217,7 +211,10 @@ class BattleshipPlayer:
         if ships is None:
             ships = [5, 4, 3, 3, 2]
         self.board = BattleshipBoard(dim=dim, ships=ships)
-        self.enemy_ships = self.board.random_board(initial=True)[0]
+        enemy_bits = self.board.random_board(initial=True)[0]
+        self.enemy_ships = [
+            self.board.bit_to_coords(b) for b in enemy_bits
+        ]
         self.enemy_board = set.union(*self.enemy_ships)
         self.enemy_ship_statuses = {
             name: {
@@ -229,6 +226,8 @@ class BattleshipPlayer:
         }
         self.n_boards = boards
         self.hits, self.misses, self.random_boards = set(), set(), []
+        self.hits_bit = 0
+        self.misses_bit = 0
         self.name_order = [name for name in self.board.names]
         self.target_hits = sum(self.board.ship_lengths.values())
         self.last_move = 0
@@ -244,11 +243,11 @@ class BattleshipPlayer:
         """
         if self.last_move == 1:
             self.random_boards = [
-                b for b in self.random_boards if not bool(b & self.misses)
+                b for b in self.random_boards if not (b & self.misses_bit)
             ]
         else:
             self.random_boards = [
-                b for b in self.random_boards if not bool(self.hits - b)
+                b for b in self.random_boards if (b & self.hits_bit) == self.hits_bit
             ]
             
         self.name_order = sorted(
@@ -313,10 +312,22 @@ class BattleshipPlayer:
             tuple: The chosen tile to target in the current turn.
         """
         self.generate_random_boards()
-        board_tiles = Counter(chain.from_iterable(self.random_boards))
-        for tile, _ in board_tiles.most_common(len(self.hits) + 1)[::-1]:
-            if tile not in self.hits and tile not in self.misses:
-                return tile
+        dim2 = self.board.dim * self.board.dim
+        counts = [0] * dim2
+        for b in self.random_boards:
+            for idx in range(dim2):
+                if b & (1 << idx):
+                    counts[idx] += 1
+        unseen_mask = ~(self.hits_bit | self.misses_bit)
+        best_idx = None
+        best_count = -1
+        for idx, c in enumerate(counts):
+            if unseen_mask & (1 << idx) and c > best_count:
+                best_idx = idx
+                best_count = c
+        if best_idx is not None:
+            x, y = divmod(best_idx, self.board.dim)
+            return (x, y)
 
         # If every candidate has already been fired at, fall back to a random
         # unseen position to guarantee progress toward game completion.
@@ -346,6 +357,7 @@ class BattleshipPlayer:
         if coords in self.enemy_board:
             if (x,y) not in self.hits:
                 self.hits.add(coords)
+                self.hits_bit |= 1 << (x * self.board.dim + y)
                 self.num_hits += 1
                 self.last_move = 2
                 for name, ship in zip(self.board.names, self.enemy_ships):
@@ -364,6 +376,7 @@ class BattleshipPlayer:
         elif coords not in self.misses:
             self.last_move = 1
             self.misses.add(coords)
+            self.misses_bit |= 1 << (x * self.board.dim + y)
             self.update_possible_ship_positions()
 
     def check_all_sunk(self) -> bool:
@@ -383,7 +396,10 @@ class BattleshipPlayer:
         reuse any state from previous rounds, keeping the sampling unbiased.
         """
         self.board.generate_component_layouts()
-        self.enemy_ships = self.board.random_board(initial=True)[0]
+        enemy_bits = self.board.random_board(initial=True)[0]
+        self.enemy_ships = [
+            self.board.bit_to_coords(b) for b in enemy_bits
+        ]
         self.enemy_board = set.union(*self.enemy_ships)
         self.enemy_ship_statuses = {
             name: {
@@ -396,4 +412,6 @@ class BattleshipPlayer:
         self.last_move = 0
         self.num_hits = 0
         self.hits, self.misses, self.random_boards = set(), set(), []
+        self.hits_bit = 0
+        self.misses_bit = 0
         self.name_order = list(self.board.names)
