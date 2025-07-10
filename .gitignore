@@ -25,3 +25,6 @@ htmlcov/
 
 # VSCode settings
 .vscode/
+
+# other 
+.DS_Store

@@ -5,14 +5,12 @@ from itertools import chain
 
 from typing import Dict, Iterable, List, Optional, Sequence, Set, Tuple
 
-
 def _batch_random_board(
     args: Tuple["BattleshipBoard", Sequence[str], int]
 ) -> List[int]:
     """Generate ``batch`` boards for multiprocessing or joblib workers."""
     board, names, batch = args
     return board.random_board(names=names, batch_size=batch)
-
 
 class BattleshipBoard:
     """
@@ -320,6 +318,7 @@ class BattleshipPlayer:
                 )
             for boards in results:
                 self.random_boards.extend(boards)
+
         else:
             self.random_boards += self.board.random_board(
                 names=self.name_order,
