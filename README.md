@@ -23,3 +23,9 @@ streamlit run dev/streamlit_app.py
 ## Codespaces
 
 If using GitHub Codespaces, see [`.devcontainer/devcontainer.json`](.devcontainer/devcontainer.json) for environment setup and automatic Streamlit startup.
+
+## Railway Deployment
+
+When you connect this repository to [Railway](https://railway.app/), the
+configuration in `railway.json` will install the dependencies and start the
+FastAPI service using Uvicorn. No additional setup is required.
