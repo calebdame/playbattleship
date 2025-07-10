@@ -35,6 +35,7 @@ class BattleshipBoard:
         if ships is None:
             ships = [5, 4, 3, 3, 2]
         self.dim = dim
+        self.dim2 = dim * dim
         self.names = tuple(string.ascii_lowercase[:len(ships)])
         self.ship_lengths = dict(zip(self.names, ships))
         self.generate_component_layouts()
@@ -312,12 +313,15 @@ class BattleshipPlayer:
             tuple: The chosen tile to target in the current turn.
         """
         self.generate_random_boards()
-        dim2 = self.board.dim * self.board.dim
+        dim2 = self.board.dim2
         counts = [0] * dim2
         for b in self.random_boards:
-            for idx in range(dim2):
-                if b & (1 << idx):
-                    counts[idx] += 1
+            bit = b
+            while bit:
+                lsb = bit & -bit
+                idx = lsb.bit_length() - 1
+                counts[idx] += 1
+                bit &= bit - 1
         unseen_mask = ~(self.hits_bit | self.misses_bit)
         best_idx = None
         best_count = -1
