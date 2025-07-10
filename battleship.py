@@ -17,9 +17,10 @@ class BattleshipBoard:
         ship_lengths (dict): Dictionary mapping ship names to their lengths.
         poss_ships_num (dict): Dictionary storing the number of possible
             positions for each ship.
-        poss_ships (dict): Dictionary storing possible positions for each ship.
-        poss_ship_bits (dict): Dictionary storing bitboard integers for each
-            possible ship placement. Used to speed up board sampling.
+        poss_ships (dict): Dictionary storing possible positions for each ship
+            as bitboard integers.
+        poss_ship_bits (dict): Alias for ``poss_ships`` kept for backward
+            compatibility.
         
     Args:
         dim (int, optional): Dimension of the square board. Defaults to 10.
@@ -47,10 +48,9 @@ class BattleshipBoard:
         in dictionaries.
         """
         self.poss_ships_num, self.poss_ships = {}, {}
-        # Store placements as integers so later operations can rely on fast
-        # bitwise arithmetic instead of slower Python set operations.  This
-        # avoids heavyweight NumPy dependencies while still providing
-        # efficient overlap checks during Monte-Carlo sampling.
+        # Ship placements are stored primarily as bitboards to speed up
+        # intersection checks. ``poss_ship_bits`` is kept for backwards
+        # compatibility, but mirrors ``poss_ships``.
         self.poss_ship_bits = {}
         dim_range = range(self.dim)
         
@@ -66,11 +66,12 @@ class BattleshipBoard:
                 for i in dim_limit for j in dim_range
             ]
 
-            self.poss_ships[name] = placements
-            self.poss_ship_bits[name] = [
-                self.coords_to_bit(p) for p in placements
-            ]
-            self.poss_ships_num[name] = len(placements)
+            bits = [self.coords_to_bit(p) for p in placements]
+            # Store only the bitboard representations to avoid the overhead
+            # of Python ``set`` operations during filtering.
+            self.poss_ships[name] = bits
+            self.poss_ship_bits[name] = bits
+            self.poss_ships_num[name] = len(bits)
 
     def coords_to_bit(self, coords: Iterable[Tuple[int, int]]) -> int:
         """Convert a placement set to a bitboard integer.
@@ -189,8 +190,10 @@ class BattleshipPlayer:
         enemy_board (set): Tiles occupied by all enemy ships.
         enemy_ship_statuses (dict): Status of each enemy ship.
         n_boards (int): Number of random boards to generate for simulations.
-        hits (set): Set of tuples representing the tiles that have been hit.
+        hits (set): Coordinates of tiles that have been hit. ``hits_bit`` stores
+            the same information as a bitboard for fast operations.
         misses (set): Tiles that have been guessed but were misses.
+            ``misses_bit`` mirrors these as a bitboard.
         random_boards (list): List of random boards generated for simulations.
         name_order (list): List of ship names ordered for strategic gameplay.
         target_hits (int): Total number of hits needed to sink all ships.
@@ -220,12 +223,13 @@ class BattleshipPlayer:
         self.enemy_ship_statuses = {
             name: {
                 'sunk': False,
-                'confirmed_pos': set(),
+                'confirmed_pos': 0,
                 'hit_count': 0,
             }
             for name in self.board.names
         }
         self.n_boards = boards
+        # Maintain sets for external callers but operate primarily on bitboards.
         self.hits, self.misses, self.random_boards = set(), set(), []
         self.hits_bit = 0
         self.misses_bit = 0
@@ -267,38 +271,39 @@ class BattleshipPlayer:
         state. Confirmed positions, hits and misses narrow down the potential
         placements.
         """
+        hits_bit = self.hits_bit
+        misses_bit = self.misses_bit
+
         for name in self.board.names:
             if len(self.board.poss_ships[name]) == 1:
                 continue
             necessary = self.enemy_ship_statuses[name]['confirmed_pos']
-            hits, misses = self.hits, self.misses
             if necessary:
-                len_necessity = self.enemy_ship_statuses[name]['hit_count']
+                need_len = self.enemy_ship_statuses[name]['hit_count']
                 if self.last_move == 1:
                     self.board.poss_ships[name] = [
                         conf for conf in self.board.poss_ships[name]
-                        if not bool(conf & misses)
+                        if not (conf & misses_bit)
                     ]
                 else:
                     self.board.poss_ships[name] = [
                         conf
                         for conf in self.board.poss_ships[name]
                         if (
-                            len(necessary & conf)
-                            == len_necessity
-                            == len(hits & conf)
+                            (conf & necessary).bit_count() == need_len
+                            and (conf & hits_bit).bit_count() == need_len
                         )
                     ]
             else:
                 if self.last_move == 1:
                     self.board.poss_ships[name] = [
                         conf for conf in self.board.poss_ships[name]
-                        if not bool(conf & misses)
+                        if not (conf & misses_bit)
                     ]
                 else:
                     self.board.poss_ships[name] = [
                         conf for conf in self.board.poss_ships[name]
-                        if not bool(hits & conf)
+                        if not (conf & hits_bit)
                     ]
             self.board.poss_ships_num[name] = len(self.board.poss_ships[name])
 
@@ -348,7 +353,8 @@ class BattleshipPlayer:
     def update_game_state(self, x: int, y: int) -> None:
         """
         Update the game state based on the outcome of the current turn.
-        Hits and misses update the sets and enemy ship status.
+        Hits and misses are tracked as both coordinate sets (for
+        compatibility) and bitboards for faster filtering.
 
         Args:
             x (int): The x-coordinate of the targeted tile.
@@ -356,20 +362,17 @@ class BattleshipPlayer:
         """
 
         coords = (x, y)
-        # Ships are stored as sets, so membership tests are O(1) and simple to
-        # reason about when updating game state.
+        bit = 1 << (x * self.board.dim + y)
         if coords in self.enemy_board:
-            if (x,y) not in self.hits:
+            if coords not in self.hits:
                 self.hits.add(coords)
-                self.hits_bit |= 1 << (x * self.board.dim + y)
+                self.hits_bit |= bit
                 self.num_hits += 1
                 self.last_move = 2
                 for name, ship in zip(self.board.names, self.enemy_ships):
-                    if (x,y) in ship:
+                    if coords in ship:
                         self.enemy_ship_statuses[name]['hit_count'] += 1
-                        self.enemy_ship_statuses[name][
-                            'confirmed_pos'
-                        ].add(coords)
+                        self.enemy_ship_statuses[name]['confirmed_pos'] |= bit
                         if (
                             self.enemy_ship_statuses[name]['hit_count']
                             == len(ship)
@@ -380,7 +383,7 @@ class BattleshipPlayer:
         elif coords not in self.misses:
             self.last_move = 1
             self.misses.add(coords)
-            self.misses_bit |= 1 << (x * self.board.dim + y)
+            self.misses_bit |= bit
             self.update_possible_ship_positions()
 
     def check_all_sunk(self) -> bool:
@@ -408,7 +411,7 @@ class BattleshipPlayer:
         self.enemy_ship_statuses = {
             name: {
                 'sunk': False,
-                'confirmed_pos': set(),
+                'confirmed_pos': 0,
                 'hit_count': 0,
             }
             for name in self.board.names
