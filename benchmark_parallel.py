@@ -2,7 +2,7 @@ import time
 from battleship import BattleshipPlayer
 
 
-def benchmark(backend: str, jobs: int = 2, boards: int = 10000) -> float:
+def benchmark(backend: str, jobs: int = 2, boards: int = 5_000_000) -> float:
     """Return the time to generate ``boards`` boards using ``backend``."""
     player = BattleshipPlayer(dim=10, boards=boards,
                               parallel_backend=backend, n_jobs=jobs)
