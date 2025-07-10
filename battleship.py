@@ -5,12 +5,12 @@ from itertools import chain
 
 from typing import Dict, Iterable, List, Optional, Sequence, Set, Tuple
 
-
-def _single_random_board(args: Tuple["BattleshipBoard", Sequence[str]]) -> int:
-    """Helper for multiprocessing joblib backends to generate one board."""
-    board, names = args
-    return board.random_board(names=names, batch_size=1)[0]
-
+def _batch_random_board(
+    args: Tuple["BattleshipBoard", Sequence[str], int]
+) -> List[int]:
+    """Generate ``batch`` boards for multiprocessing or joblib workers."""
+    board, names, batch = args
+    return board.random_board(names=names, batch_size=batch)
 
 class BattleshipBoard:
     """
@@ -282,20 +282,43 @@ class BattleshipPlayer:
         if self.parallel_backend == "joblib":
             from joblib import Parallel, delayed
 
-            results = Parallel(n_jobs=self.n_jobs, backend="loky")(
-                delayed(self.board.random_board)(names=self.name_order, batch_size=1)
-                for _ in range(needed)
+            batch = (needed + self.n_jobs - 1) // self.n_jobs
+            chunks = []
+            remain = needed
+            for _ in range(self.n_jobs):
+                if remain <= 0:
+                    break
+                cur = min(batch, remain)
+                chunks.append(cur)
+                remain -= cur
+
+            results = Parallel(n_jobs=len(chunks), backend="loky")(
+                delayed(_batch_random_board)((self.board, self.name_order, c))
+                for c in chunks
             )
-            self.random_boards += [r[0] for r in results]
+            for boards in results:
+                self.random_boards.extend(boards)
         elif self.parallel_backend == "multiprocessing":
             import multiprocessing as mp
 
-            with mp.Pool(self.n_jobs) as pool:
+            batch = (needed + self.n_jobs - 1) // self.n_jobs
+            chunks = []
+            remain = needed
+            for _ in range(self.n_jobs):
+                if remain <= 0:
+                    break
+                cur = min(batch, remain)
+                chunks.append(cur)
+                remain -= cur
+
+            with mp.Pool(len(chunks)) as pool:
                 results = pool.map(
-                    _single_random_board,
-                    [(self.board, self.name_order)] * needed,
+                    _batch_random_board,
+                    [(self.board, self.name_order, c) for c in chunks],
                 )
-            self.random_boards += results
+            for boards in results:
+                self.random_boards.extend(boards)
+
         else:
             self.random_boards += self.board.random_board(
                 names=self.name_order,
