@@ -6,6 +6,12 @@ from itertools import chain
 from typing import Dict, Iterable, List, Optional, Sequence, Set, Tuple
 
 
+def _single_random_board(args: Tuple["BattleshipBoard", Sequence[str]]) -> int:
+    """Helper for multiprocessing joblib backends to generate one board."""
+    board, names = args
+    return board.random_board(names=names, batch_size=1)[0]
+
+
 class BattleshipBoard:
     """
     Main Battleship class where rules of the game are defined such as
@@ -205,12 +211,19 @@ class BattleshipPlayer:
         ships (list, optional): Ship lengths. Defaults to [5, 4, 3, 3, 2].
         boards (int, optional): Number of random boards for simulations.
             Defaults to 10000.
+        parallel_backend (str, optional): ``'joblib'`` or ``'multiprocessing'``
+            to generate boards in parallel. Any other value disables
+            parallelism. Defaults to ``'sequential'``.
+        n_jobs (int, optional): Number of worker processes when using a
+            parallel backend. Defaults to 1.
     """
     def __init__(
         self,
         dim: int = 10,
         ships: Optional[Sequence[int]] = None,
         boards: int = 10000,
+        parallel_backend: str = "sequential",
+        n_jobs: int = 1,
     ) -> None:
         if ships is None:
             ships = [5, 4, 3, 3, 2]
@@ -229,6 +242,8 @@ class BattleshipPlayer:
             for name in self.board.names
         }
         self.n_boards = boards
+        self.parallel_backend = parallel_backend
+        self.n_jobs = n_jobs
         # Maintain sets for external callers but operate primarily on bitboards.
         self.hits, self.misses, self.random_boards = set(), set(), []
         self.hits_bit = 0
@@ -260,10 +275,32 @@ class BattleshipPlayer:
             key=lambda x: self.board.poss_ships_num.get(x, float("inf")),
         )
         num_b = len(self.random_boards)
-        self.random_boards += self.board.random_board(
-            names=self.name_order,
-            batch_size=self.n_boards - num_b,
-        )
+        needed = self.n_boards - num_b
+        if needed <= 0:
+            return
+
+        if self.parallel_backend == "joblib":
+            from joblib import Parallel, delayed
+
+            results = Parallel(n_jobs=self.n_jobs, backend="loky")(
+                delayed(self.board.random_board)(names=self.name_order, batch_size=1)
+                for _ in range(needed)
+            )
+            self.random_boards += [r[0] for r in results]
+        elif self.parallel_backend == "multiprocessing":
+            import multiprocessing as mp
+
+            with mp.Pool(self.n_jobs) as pool:
+                results = pool.map(
+                    _single_random_board,
+                    [(self.board, self.name_order)] * needed,
+                )
+            self.random_boards += results
+        else:
+            self.random_boards += self.board.random_board(
+                names=self.name_order,
+                batch_size=needed,
+            )
     
     def update_possible_ship_positions(self) -> None:
         """
