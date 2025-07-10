@@ -77,3 +77,48 @@ def test_reset_resets_state():
     player.misses.add((1, 1))
     player.reset()
     assert not player.hits and not player.misses
+
+
+def test_reset_changes_enemy_board():
+    player = BattleshipPlayer(dim=4, ships=[2])
+    original = set(player.enemy_board)
+    player.reset()
+    assert original != player.enemy_board
+    assert not player.hits and not player.misses
+
+
+def test_update_possible_ship_positions_filters():
+    player = BattleshipPlayer(dim=4, ships=[2])
+    initial = player.board.poss_ships_num["a"]
+    # choose a coordinate that is a miss
+    miss = next(c for c in ((i,j) for i in range(4) for j in range(4)) if c not in player.enemy_board)
+    player.update_game_state(*miss)
+    after = player.board.poss_ships_num["a"]
+    assert after < initial
+
+
+def test_random_board_initial_returns_list():
+    board = BattleshipBoard(dim=4, ships=[2,2])
+    boards = board.random_board(initial=True, batch_size=2)
+    assert len(boards) == 2
+    for b in boards:
+        assert isinstance(b, list)
+        assert len(b) == 2
+        # ensure no overlap
+        total = 0
+        for ship in b:
+            assert ship & total == 0
+            total |= ship
+
+
+def test_full_game_simulation():
+    for _ in range(3):
+        player = BattleshipPlayer(dim=5, ships=[3,2], boards=1000)
+        turns = 0
+        while not player.check_all_sunk():
+            coord = player.take_turn()
+            assert coord is not None
+            player.update_game_state(*coord)
+            turns += 1
+            assert turns <= player.board.dim * player.board.dim
+        assert player.check_all_sunk()
