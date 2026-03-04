@@ -48,17 +48,47 @@ if player.check_all_sunk():
 player.reset()
 ```
 
+### Time-based sampling
+
+Instead of a fixed sample count, you can give each turn a time budget.
+The generation phase stops after `board_time - tol` seconds, so the turn
+completes in roughly `board_time` seconds regardless of hardware speed.
+
+```python
+# Sample boards for ~3 seconds per turn (tol defaults to 1e-6)
+player = BattleshipPlayer(dim=10, board_time=3.0)
+
+# Tighten the early-stop tolerance if needed
+player = BattleshipPlayer(dim=10, board_time=3.0, tol=1e-4)
+```
+
+After every call to `take_turn()` the timing and board count are recorded
+in `player.turn_data`, a dict mapping turn number to `(time_took, n_boards_sampled)`:
+
+```python
+coord = player.take_turn()
+player.update_game_state(*coord)
+
+turn_time, n_boards = player.turn_data[1]
+print(f"Turn 1: {n_boards} boards sampled in {turn_time:.3f}s")
+```
+
+`turn_data` is populated in both count-based and time-based modes.
+It is cleared by `player.reset()`.
+
 ### Using as a backend for your own game
 
 When integrating with your own server, you typically manage the enemy board yourself. The key methods:
 
 | Method | Purpose |
 |---|---|
-| `BattleshipPlayer(dim, ships, boards)` | Create a player with given board config and sample size |
+| `BattleshipPlayer(dim, ships, boards)` | Create a player with a fixed Monte-Carlo sample size |
+| `BattleshipPlayer(dim, ships, board_time, tol)` | Create a player with a per-turn time budget |
 | `player.take_turn()` | Returns `(row, col)` — the AI's best guess |
 | `player.update_game_state(row, col)` | Records hit/miss and updates internal sampling |
 | `player.check_all_sunk()` | Returns `True` when all ships are sunk |
 | `player.reset()` | Clears state for a new game |
+| `player.turn_data` | `{turn_number: (time_took, n_boards_sampled)}` for every turn |
 | `player.generate_random_boards()` | Manually refresh the Monte-Carlo pool |
 
 ### Parallel board generation
@@ -83,9 +113,10 @@ automatically.
 ## How it works
 
 1. **Pre-computation** — All legal ship placements are encoded as bitboard integers during initialization.
-2. **Sampling** — Each turn, a pool of random boards consistent with known hits/misses is maintained. Previously valid boards are filtered first; only the deficit is newly generated.
+2. **Sampling** — Each turn, a pool of random boards is built. In count-based mode (`boards=N`), previously valid boards are filtered and only the deficit is regenerated. In time-based mode (`board_time=T`), boards are generated fresh for `T - tol` seconds using break statements in both the Python and Cython inner loops.
 3. **Selection** — Tile frequencies across the sample are tallied. The most common unseen tile is chosen as the next shot.
 4. **Pruning** — After each shot, impossible ship placements are removed, accelerating future sampling.
+5. **Telemetry** — Every turn records `(elapsed_seconds, boards_sampled)` in `player.turn_data` keyed by turn number.
 
 ## Running tests
 

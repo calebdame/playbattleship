@@ -1,4 +1,5 @@
 import string
+import time as _time
 from typing import Iterable, List, Optional, Sequence, Set, Tuple
 
 import random
@@ -93,6 +94,7 @@ class BattleshipBoard:
         initial: bool = False,
         names: Optional[Sequence[str]] = None,
         batch_size: int = 1,
+        time_limit: Optional[float] = None,
     ) -> List[int]:
         """Generate one or more random non-overlapping ship layouts.
 
@@ -100,7 +102,10 @@ class BattleshipBoard:
             initial: When True each result is a *list* of per-ship bitboards
                 rather than a single combined bitboard.
             names: Subset of ship names to place.  Defaults to all ships.
-            batch_size: How many boards to generate.
+            batch_size: How many boards to generate (ignored when
+                *time_limit* is set).
+            time_limit: When set, generate boards until this many seconds
+                have elapsed instead of producing exactly *batch_size*.
 
         Returns:
             A list of bitboard integers (or lists of bitboards when *initial*
@@ -117,11 +122,13 @@ class BattleshipBoard:
 
         # ── Cython fast path (128-bit BB → up to 11x11) ──────────
         if _fast_gen is not None and self.dim2 <= 128:
+            tl = -1.0 if time_limit is None else time_limit
             return _fast_gen(
                 [self.poss_ships[n] for n in active],
                 [self.poss_ships_num[n] for n in active],
                 batch_size,
                 initial,
+                tl,
             )
 
         # ── Python fallback ───────────────────────────────────────
@@ -129,6 +136,9 @@ class BattleshipBoard:
         first_name, *rest_names = active
 
         bits = self.poss_ships
+
+        timed = time_limit is not None
+        deadline = _time.monotonic() + time_limit if timed else 0.0
 
         if self.poss_ships_num[first_name] == 1:
             start_bits = [
@@ -143,7 +153,12 @@ class BattleshipBoard:
             for b in start_bits:
                 start_t |= b
 
-            while len(results) < batch_size:
+            while True:
+                if timed:
+                    if _time.monotonic() >= deadline:
+                        break
+                elif len(results) >= batch_size:
+                    break
                 while True:
                     end = True
                     t_bit = start_t
@@ -160,7 +175,12 @@ class BattleshipBoard:
                         results.append(cur_bits if initial else t_bit)
                         break
         else:
-            while len(results) < batch_size:
+            while True:
+                if timed:
+                    if _time.monotonic() >= deadline:
+                        break
+                elif len(results) >= batch_size:
+                    break
                 while True:
                     end = True
                     idx = int(self.poss_ships_num[first_name] * random.random())

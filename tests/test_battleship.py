@@ -1,4 +1,5 @@
 import random
+import time
 
 import pytest
 
@@ -120,3 +121,97 @@ def test_full_game_simulation():
             turns += 1
             assert turns <= player.board.dim * player.board.dim
         assert player.check_all_sunk()
+
+
+# ── board_time / turn_data tests ─────────────────────────────────
+
+
+def test_random_board_time_limit_produces_boards():
+    """random_board with time_limit generates boards for the given duration."""
+    board = BattleshipBoard(dim=4, ships=[2, 3])
+    results = board.random_board(time_limit=0.05)
+    assert len(results) > 0
+    for b in results:
+        coords = board.bit_to_coords(b)
+        assert len(coords) == 5
+
+
+def test_random_board_time_limit_respects_duration():
+    """Generation should stop roughly around the time limit."""
+    board = BattleshipBoard(dim=4, ships=[2, 3])
+    t0 = time.monotonic()
+    board.random_board(time_limit=0.1)
+    elapsed = time.monotonic() - t0
+    assert elapsed < 0.3  # generous upper bound
+
+
+def test_board_time_player_generates_boards():
+    """BattleshipPlayer with board_time generates boards each turn."""
+    player = BattleshipPlayer(dim=4, ships=[2], board_time=0.05)
+    coord = player.take_turn()
+    assert coord is not None
+    assert len(player.random_boards) > 0
+
+
+def test_board_time_player_turn_data():
+    """turn_data tracks (time_took, n_boards_sampled) per turn number."""
+    player = BattleshipPlayer(dim=4, ships=[2], board_time=0.05)
+    coord = player.take_turn()
+    player.update_game_state(*coord)
+    coord = player.take_turn()
+    player.update_game_state(*coord)
+
+    assert 1 in player.turn_data
+    assert 2 in player.turn_data
+    assert player.turn_number == 2
+
+    for turn_num in (1, 2):
+        time_took, n_boards = player.turn_data[turn_num]
+        assert isinstance(time_took, float)
+        assert time_took > 0
+        assert isinstance(n_boards, int)
+        assert n_boards > 0
+
+
+def test_turn_data_tracked_in_count_mode():
+    """turn_data is populated even in the default count-based mode."""
+    player = BattleshipPlayer(dim=4, ships=[2], boards=100)
+    player.take_turn()
+    assert 1 in player.turn_data
+    time_took, n_boards = player.turn_data[1]
+    assert time_took > 0
+    assert n_boards > 0
+
+
+def test_board_time_tol_parameter():
+    """tol parameter is respected (board_time - tol used as limit)."""
+    player = BattleshipPlayer(dim=4, ships=[2], board_time=0.05, tol=1e-4)
+    assert player.tol == 1e-4
+    player.take_turn()
+    assert len(player.random_boards) > 0
+
+
+def test_board_time_reset_clears_turn_data():
+    """reset() clears turn_data and turn_number."""
+    player = BattleshipPlayer(dim=4, ships=[2], board_time=0.05)
+    player.take_turn()
+    assert player.turn_number == 1
+    assert len(player.turn_data) == 1
+    player.reset()
+    assert player.turn_number == 0
+    assert player.turn_data == {}
+
+
+def test_board_time_full_game():
+    """Full game with board_time completes successfully."""
+    player = BattleshipPlayer(dim=5, ships=[3, 2], board_time=0.05)
+    turns = 0
+    while not player.check_all_sunk():
+        coord = player.take_turn()
+        assert coord is not None
+        player.update_game_state(*coord)
+        turns += 1
+        assert turns <= 25
+    assert player.check_all_sunk()
+    assert player.turn_number == turns
+    assert len(player.turn_data) == turns
