@@ -26,5 +26,10 @@ htmlcov/
 # VSCode settings
 .vscode/
 
-# other 
+# Cython build artifacts
+*.so
+*.c
+!battleship/_fast_board.pyx
+
+# other
 .DS_Store

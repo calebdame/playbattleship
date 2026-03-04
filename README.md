@@ -6,12 +6,15 @@ A Python module that plays Battleship using Monte-Carlo sampling. Designed to be
 
 ```
 battleship/
-    __init__.py      # Exports BattleshipBoard, BattleshipPlayer
-    board.py         # Board geometry, legal placements, random board generation
-    player.py        # Monte-Carlo AI player (sampling, turn selection, state tracking)
+    __init__.py        # Exports BattleshipBoard, BattleshipPlayer
+    board.py           # Board geometry, legal placements, random board generation
+    player.py          # Monte-Carlo AI player (sampling, turn selection, state tracking)
+    _fast_board.pyx    # Cython extension for fast board generation (~8-11x speedup)
 tests/
     test_battleship.py   # Core logic tests
+    test_fast_board.py   # Cython extension tests + benchmark
     test_parallel.py     # Parallel backend tests
+setup.py               # Build script for Cython extension
 ```
 
 ## Installation
@@ -20,6 +23,7 @@ tests/
 git clone https://github.com/calebdame/playbattleship.git
 cd playbattleship
 pip install -r requirements.txt
+python setup.py build_ext --inplace   # optional: build Cython extension for ~8-11x faster board gen
 ```
 
 ## Usage
@@ -68,6 +72,13 @@ player = BattleshipPlayer(
     n_jobs=4,
 )
 ```
+
+### Cython acceleration
+
+The Cython extension (`_fast_board.pyx`) replaces the rejection-sampling loop
+with typed C using 128-bit bitboards and a xorshift64* PRNG. It supports boards
+up to 11x11. If the extension is not built, `board.py` falls back to pure Python
+automatically.
 
 ## How it works
 

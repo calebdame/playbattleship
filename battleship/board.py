@@ -3,6 +3,11 @@ from typing import Iterable, List, Optional, Sequence, Set, Tuple
 
 import random
 
+try:
+    from ._fast_board import fast_random_boards as _fast_gen
+except ImportError:
+    _fast_gen = None
+
 
 class BattleshipBoard:
     """Board geometry and random-board generation for Battleship.
@@ -104,13 +109,24 @@ class BattleshipBoard:
         if names is None:
             names = []
 
-        results: list = []
-
+        # Resolve active ship list once for both paths.
         if initial or not names:
-            first_name, *rest_names = self.names
-            names = self.names
+            active = self.names
         else:
-            first_name, *rest_names = names
+            active = names
+
+        # ── Cython fast path (128-bit BB → up to 11x11) ──────────
+        if _fast_gen is not None and self.dim2 <= 128:
+            return _fast_gen(
+                [self.poss_ships[n] for n in active],
+                [self.poss_ships_num[n] for n in active],
+                batch_size,
+                initial,
+            )
+
+        # ── Python fallback ───────────────────────────────────────
+        results: list = []
+        first_name, *rest_names = active
 
         bits = self.poss_ships
 
