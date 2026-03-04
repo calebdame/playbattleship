@@ -95,6 +95,7 @@ class BattleshipBoard:
         names: Optional[Sequence[str]] = None,
         batch_size: int = 1,
         time_limit: Optional[float] = None,
+        backend: str = "auto",
     ) -> List[int]:
         """Generate one or more random non-overlapping ship layouts.
 
@@ -106,6 +107,10 @@ class BattleshipBoard:
                 *time_limit* is set).
             time_limit: When set, generate boards until this many seconds
                 have elapsed instead of producing exactly *batch_size*.
+            backend: Which generation backend to use.  ``'auto'`` (default)
+                uses Cython when available, otherwise Python.  ``'cython'``
+                forces the Cython extension (raises ``RuntimeError`` if it is
+                not installed).  ``'python'`` forces the pure-Python path.
 
         Returns:
             A list of bitboard integers (or lists of bitboards when *initial*
@@ -121,7 +126,21 @@ class BattleshipBoard:
             active = names
 
         # ── Cython fast path (128-bit BB → up to 11x11) ──────────
-        if _fast_gen is not None and self.dim2 <= 128:
+        if backend == "cython":
+            if _fast_gen is None:
+                raise RuntimeError(
+                    "Cython backend requested but '_fast_board' extension is not"
+                    " available.  Build it with: python setup.py build_ext --inplace"
+                )
+            if self.dim2 > 128:
+                raise RuntimeError(
+                    f"Cython backend only supports dim2 <= 128 (got {self.dim2})."
+                )
+        use_cython = (
+            backend == "cython"
+            or (backend == "auto" and _fast_gen is not None and self.dim2 <= 128)
+        )
+        if use_cython:
             tl = -1.0 if time_limit is None else time_limit
             return _fast_gen(
                 [self.poss_ships[n] for n in active],

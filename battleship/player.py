@@ -6,11 +6,11 @@ from .board import BattleshipBoard
 
 
 def _batch_random_board(
-    args: Tuple["BattleshipBoard", Sequence[str], int],
+    args: Tuple["BattleshipBoard", Sequence[str], int, str],
 ) -> List[int]:
     """Generate *batch* boards — pickleable helper for parallel workers."""
-    board, names, batch = args
-    return board.random_board(names=names, batch_size=batch)
+    board, names, batch, backend = args
+    return board.random_board(names=names, batch_size=batch, backend=backend)
 
 
 class BattleshipPlayer:
@@ -32,6 +32,9 @@ class BattleshipPlayer:
         parallel_backend: ``'joblib'``, ``'multiprocessing'``, or anything
             else for sequential generation.
         n_jobs: Worker count for parallel backends.
+        backend: Board-generation backend: ``'auto'`` (default) uses Cython
+            when available, ``'cython'`` forces the Cython extension, and
+            ``'python'`` forces the pure-Python implementation.
     """
 
     def __init__(
@@ -43,12 +46,14 @@ class BattleshipPlayer:
         tol: float = 1e-6,
         parallel_backend: str = "sequential",
         n_jobs: int = 1,
+        backend: str = "auto",
     ) -> None:
         if ships is None:
             ships = [5, 4, 3, 3, 2]
         self.board = BattleshipBoard(dim=dim, ships=ships)
+        self.backend = backend
 
-        enemy_bits = self.board.random_board(initial=True)[0]
+        enemy_bits = self.board.random_board(initial=True, backend=self.backend)[0]
         self.enemy_ships = [self.board.bit_to_coords(b) for b in enemy_bits]
         self.enemy_board = set.union(*self.enemy_ships)
         self.enemy_ship_statuses = {
@@ -96,6 +101,7 @@ class BattleshipPlayer:
                 self.random_boards = self.board.random_board(
                     names=self.name_order,
                     time_limit=tl,
+                    backend=self.backend,
                 )
             else:
                 self.random_boards = []
@@ -134,7 +140,7 @@ class BattleshipPlayer:
                 remain -= cur
 
             results = Parallel(n_jobs=len(chunks), backend="loky")(
-                delayed(_batch_random_board)((self.board, self.name_order, c))
+                delayed(_batch_random_board)((self.board, self.name_order, c, self.backend))
                 for c in chunks
             )
             for boards in results:
@@ -156,7 +162,7 @@ class BattleshipPlayer:
             with mp.Pool(len(chunks)) as pool:
                 results = pool.map(
                     _batch_random_board,
-                    [(self.board, self.name_order, c) for c in chunks],
+                    [(self.board, self.name_order, c, self.backend) for c in chunks],
                 )
             for boards in results:
                 self.random_boards.extend(boards)
@@ -165,6 +171,7 @@ class BattleshipPlayer:
             self.random_boards += self.board.random_board(
                 names=self.name_order,
                 batch_size=needed,
+                backend=self.backend,
             )
 
     # ------------------------------------------------------------------
@@ -299,7 +306,7 @@ class BattleshipPlayer:
     def reset(self) -> None:
         """Reset all game state for a fresh round."""
         self.board.generate_component_layouts()
-        enemy_bits = self.board.random_board(initial=True)[0]
+        enemy_bits = self.board.random_board(initial=True, backend=self.backend)[0]
         self.enemy_ships = [self.board.bit_to_coords(b) for b in enemy_bits]
         self.enemy_board = set.union(*self.enemy_ships)
         self.enemy_ship_statuses = {
