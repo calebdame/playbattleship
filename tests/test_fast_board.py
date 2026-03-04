@@ -155,3 +155,74 @@ def test_benchmark_cython_vs_python(capsys):
         )
     # Just assert Cython isn't slower
     assert t_cython <= t_python * 1.5
+
+
+# ── Time-limited generation via Cython ───────────────────────────
+
+
+def test_fast_gen_time_limit_produces_boards():
+    """time_limit > 0 generates boards for the given duration."""
+    board = BattleshipBoard(dim=4, ships=[2, 3])
+    placements = [board.poss_ships[n] for n in board.names]
+    counts = [board.poss_ships_num[n] for n in board.names]
+    results = fast_random_boards(placements, counts, 0, False, 0.05)
+    assert len(results) > 0
+    for b in results:
+        coords = board.bit_to_coords(b)
+        assert len(coords) == 5
+
+
+def test_fast_gen_time_limit_respects_duration():
+    """Generation finishes roughly around the time limit."""
+    board = BattleshipBoard(dim=10, ships=[5, 4, 3, 3, 2])
+    placements = [board.poss_ships[n] for n in board.names]
+    counts = [board.poss_ships_num[n] for n in board.names]
+    t0 = time.perf_counter()
+    fast_random_boards(placements, counts, 0, False, 0.1)
+    elapsed = time.perf_counter() - t0
+    assert elapsed < 0.3  # generous upper bound
+
+
+def test_fast_gen_time_limit_initial():
+    """time_limit with initial=True returns per-ship bitboards."""
+    board = BattleshipBoard(dim=4, ships=[2, 2])
+    placements = [board.poss_ships[n] for n in board.names]
+    counts = [board.poss_ships_num[n] for n in board.names]
+    results = fast_random_boards(placements, counts, 0, True, 0.05)
+    assert len(results) > 0
+    for ships in results:
+        assert isinstance(ships, list)
+        assert len(ships) == 2
+        combined = 0
+        for s in ships:
+            assert s & combined == 0
+            combined |= s
+
+
+def test_fast_gen_time_limit_via_board():
+    """BattleshipBoard.random_board delegates time_limit to Cython."""
+    board = BattleshipBoard(dim=10, ships=[5, 4, 3, 3, 2])
+    results = board.random_board(time_limit=0.05)
+    assert len(results) > 0
+    total_tiles = sum(board.ship_lengths.values())
+    for b in results:
+        assert bin(b).count("1") == total_tiles
+
+
+def test_board_time_full_game_with_cython():
+    """Full game using board_time works with Cython backend."""
+    player = BattleshipPlayer(dim=5, ships=[3, 2], board_time=0.05)
+    turns = 0
+    while not player.check_all_sunk():
+        coord = player.take_turn()
+        assert coord is not None
+        player.update_game_state(*coord)
+        turns += 1
+        assert turns <= 25
+    assert player.check_all_sunk()
+    assert player.turn_number == turns
+    assert len(player.turn_data) == turns
+    for t in range(1, turns + 1):
+        time_took, n_boards = player.turn_data[t]
+        assert time_took > 0
+        assert n_boards > 0

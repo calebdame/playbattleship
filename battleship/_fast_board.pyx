@@ -8,10 +8,24 @@ using 128-bit bitboards (2 x uint64) and xorshift64* PRNG.
 Supports boards up to 11x11 (121 tiles <= 128 bits).
 """
 
-from libc.stdlib cimport malloc, free
+from libc.stdlib cimport malloc, free, realloc
 from libc.stdint cimport uint64_t, uint32_t
 
 import random as _py_random
+
+# ── monotonic clock (for time-limited generation) ─────────────────
+
+cdef extern from "<time.h>" nogil:
+    cdef struct timespec:
+        long tv_sec
+        long tv_nsec
+    int CLOCK_MONOTONIC
+    int clock_gettime(int, timespec *)
+
+cdef inline double _monotonic() noexcept nogil:
+    cdef timespec ts
+    clock_gettime(CLOCK_MONOTONIC, &ts)
+    return <double>ts.tv_sec + <double>ts.tv_nsec * 1e-9
 
 # ── 128-bit bitboard ──────────────────────────────────────────────
 
@@ -68,8 +82,9 @@ def fast_random_boards(
     list ship_counts,
     int batch_size,
     bint initial,
+    double time_limit=-1.0,
 ):
-    """Generate *batch_size* random non-overlapping ship layouts.
+    """Generate random non-overlapping ship layouts.
 
     Parameters
     ----------
@@ -78,17 +93,22 @@ def fast_random_boards(
     ship_counts : list[int]
         Number of placements available per ship.
     batch_size : int
-        How many boards to produce.
+        How many boards to produce (ignored when *time_limit* > 0).
     initial : bool
         True  -> return list of lists (per-ship bitboards).
         False -> return list of combined bitboards.
+    time_limit : float, optional
+        When positive, generate boards until this many seconds have
+        elapsed instead of producing exactly *batch_size* boards.
 
     Returns
     -------
     list[int] or list[list[int]]
     """
     cdef int n_ships = len(ship_placements)
-    if n_ships == 0 or batch_size <= 0:
+    cdef bint timed = time_limit > 0.0
+
+    if n_ships == 0 or (not timed and batch_size <= 0):
         return []
 
     # Seed from Python's random state so callers that seed random get
@@ -112,11 +132,17 @@ def fast_random_boards(
             c_pl[i][j] = _to_bb(plist[j])
 
     # ── Working storage ───────────────────────────────────────────
+    cdef int capacity
+    if timed:
+        capacity = 4096
+    else:
+        capacity = batch_size
+
     cdef BB *cur_bits = <BB *>malloc(n_ships * sizeof(BB))
-    cdef BB *combined = <BB *>malloc(batch_size * sizeof(BB))
+    cdef BB *combined = <BB *>malloc(capacity * sizeof(BB))
     cdef BB *all_ships = NULL
     if initial:
-        all_ships = <BB *>malloc(batch_size * n_ships * sizeof(BB))
+        all_ships = <BB *>malloc(capacity * n_ships * sizeof(BB))
         if all_ships == NULL:
             raise MemoryError()
     if cur_bits == NULL or combined == NULL:
@@ -127,10 +153,25 @@ def fast_random_boards(
     cdef uint32_t idx
     cdef bint collision
     cdef int produced
+    cdef double deadline
+    cdef BB *new_combined
+    cdef BB *new_all_ships
 
     with nogil:
+        if timed:
+            deadline = _monotonic() + time_limit
+
         produced = 0
-        while produced < batch_size:
+        while True:
+            # ── stop condition ────────────────────────────────────
+            if timed:
+                if _monotonic() >= deadline:
+                    break
+            else:
+                if produced >= batch_size:
+                    break
+
+            # ── rejection-sample one valid board ──────────────────
             while True:
                 collision = False
                 idx = _rand_below(c_n[0])
@@ -149,6 +190,19 @@ def fast_random_boards(
                 if not collision:
                     break
 
+            # ── grow buffer if needed (timed mode only) ───────────
+            if timed and produced >= capacity:
+                capacity = capacity * 2
+                new_combined = <BB *>realloc(combined, capacity * sizeof(BB))
+                if new_combined == NULL:
+                    break
+                combined = new_combined
+                if all_ships != NULL:
+                    new_all_ships = <BB *>realloc(all_ships, capacity * n_ships * sizeof(BB))
+                    if new_all_ships == NULL:
+                        break
+                    all_ships = new_all_ships
+
             combined[produced] = t_bit
             if all_ships != NULL:
                 for i in range(n_ships):
@@ -158,13 +212,13 @@ def fast_random_boards(
     # ── Convert results back to Python ────────────────────────────
     cdef list results = []
     if initial:
-        for i in range(batch_size):
+        for i in range(produced):
             results.append([
                 _from_bb(all_ships[i * n_ships + j])
                 for j in range(n_ships)
             ])
     else:
-        for i in range(batch_size):
+        for i in range(produced):
             results.append(_from_bb(combined[i]))
 
     # ── Cleanup ───────────────────────────────────────────────────

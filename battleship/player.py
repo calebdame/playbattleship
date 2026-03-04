@@ -1,5 +1,6 @@
 import random
-from typing import List, Optional, Sequence, Tuple
+import time
+from typing import Dict, List, Optional, Sequence, Tuple
 
 from .board import BattleshipBoard
 
@@ -22,7 +23,12 @@ class BattleshipPlayer:
     Args:
         dim: Board side length.
         ships: List of ship lengths.
-        boards: Number of Monte-Carlo samples to maintain.
+        boards: Number of Monte-Carlo samples to maintain (ignored when
+            *board_time* is set).
+        board_time: When set, sample boards for this many seconds per turn
+            instead of targeting a fixed sample count.
+        tol: Tolerance subtracted from *board_time* so the generation phase
+            finishes slightly early.  Defaults to ``1e-6``.
         parallel_backend: ``'joblib'``, ``'multiprocessing'``, or anything
             else for sequential generation.
         n_jobs: Worker count for parallel backends.
@@ -33,6 +39,8 @@ class BattleshipPlayer:
         dim: int = 10,
         ships: Optional[Sequence[int]] = None,
         boards: int = 10000,
+        board_time: Optional[float] = None,
+        tol: float = 1e-6,
         parallel_backend: str = "sequential",
         n_jobs: int = 1,
     ) -> None:
@@ -49,6 +57,8 @@ class BattleshipPlayer:
         }
 
         self.n_boards = boards
+        self.board_time = board_time
+        self.tol = tol
         self.parallel_backend = parallel_backend
         self.n_jobs = n_jobs
 
@@ -61,6 +71,8 @@ class BattleshipPlayer:
         self.target_hits = sum(self.board.ship_lengths.values())
         self.last_move = 0
         self.num_hits = 0
+        self.turn_number = 0
+        self.turn_data: Dict[int, Tuple[float, int]] = {}
 
     # ------------------------------------------------------------------
     # Board sampling
@@ -69,9 +81,26 @@ class BattleshipPlayer:
     def generate_random_boards(self) -> None:
         """Refresh the Monte-Carlo pool to respect current hits/misses.
 
-        Previously valid boards are filtered first; only the deficit is
-        newly generated, keeping sampling responsive at high *n_boards*.
+        When *board_time* is set, boards are generated for a fixed duration
+        each turn.  Otherwise, previously valid boards are filtered first
+        and only the deficit is newly generated, keeping sampling responsive
+        at high *n_boards*.
         """
+        if self.board_time is not None:
+            self.name_order = sorted(
+                self.name_order,
+                key=lambda x: self.board.poss_ships_num.get(x, float("inf")),
+            )
+            tl = self.board_time - self.tol
+            if tl > 0:
+                self.random_boards = self.board.random_board(
+                    names=self.name_order,
+                    time_limit=tl,
+                )
+            else:
+                self.random_boards = []
+            return
+
         if self.last_move == 1:
             self.random_boards = [
                 b for b in self.random_boards if not (b & self.misses_bit)
@@ -191,8 +220,16 @@ class BattleshipPlayer:
         Tallies tile frequencies across sampled boards and picks the most
         common unseen tile.  Falls back to a random unseen tile when the
         sample is exhausted.
+
+        After each call the turn is recorded in :attr:`turn_data` as
+        ``{turn_number: (time_took, n_boards_sampled)}``.
         """
+        self.turn_number += 1
+        t0 = time.monotonic()
+
         self.generate_random_boards()
+        n_boards_sampled = len(self.random_boards)
+
         dim2 = self.board.dim2
         counts = [0] * dim2
         for b in self.random_boards:
@@ -212,17 +249,18 @@ class BattleshipPlayer:
                 best_count = c
 
         if best_idx is not None:
-            return divmod(best_idx, self.board.dim)
+            result: Optional[Tuple[int, int]] = divmod(best_idx, self.board.dim)
+        else:
+            remaining = [
+                (x, y)
+                for x in range(self.board.dim)
+                for y in range(self.board.dim)
+                if (x, y) not in self.hits and (x, y) not in self.misses
+            ]
+            result = random.choice(remaining) if remaining else None
 
-        remaining = [
-            (x, y)
-            for x in range(self.board.dim)
-            for y in range(self.board.dim)
-            if (x, y) not in self.hits and (x, y) not in self.misses
-        ]
-        if remaining:
-            return random.choice(remaining)
-        return None
+        self.turn_data[self.turn_number] = (time.monotonic() - t0, n_boards_sampled)
+        return result
 
     # ------------------------------------------------------------------
     # Game state updates
@@ -274,3 +312,5 @@ class BattleshipPlayer:
         self.hits_bit = 0
         self.misses_bit = 0
         self.name_order = list(self.board.names)
+        self.turn_number = 0
+        self.turn_data = {}
