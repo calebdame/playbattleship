@@ -1,5 +1,2 @@
-streamlit
-fastapi
-uvicorn
-aiofiles
+cython
 joblib
