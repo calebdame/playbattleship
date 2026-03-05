@@ -114,9 +114,63 @@ automatically.
 
 1. **Pre-computation** — All legal ship placements are encoded as bitboard integers during initialization.
 2. **Sampling** — Each turn, a pool of random boards is built. In count-based mode (`boards=N`), previously valid boards are filtered and only the deficit is regenerated. In time-based mode (`board_time=T`), boards are generated fresh for `T - tol` seconds using break statements in both the Python and Cython inner loops.
-3. **Selection** — Tile frequencies across the sample are tallied. The most common unseen tile is chosen as the next shot.
+3. **Selection** — Tile frequencies across the sample are tallied using a bitwise parallel counter (see [Performance optimizations](#performance-optimizations) below). The most common unseen tile is chosen as the next shot.
 4. **Pruning** — After each shot, impossible ship placements are removed, accelerating future sampling.
 5. **Telemetry** — Every turn records `(elapsed_seconds, boards_sampled)` in `player.turn_data` keyed by turn number.
+
+## Performance optimizations
+
+A single playthrough runs significantly faster with all optimizations enabled
+compared to a naive pure-Python implementation.
+
+### Where the time goes
+
+Profiling reveals two dominant costs per turn:
+
+| Phase | Description |
+|---|---|
+| Tile frequency counting | Tallying how often each tile appears across all sampled boards |
+| Board generation | Rejection-sampling valid ship layouts |
+
+### Tricks used
+
+1. **Bitwise parallel popcount (carry-chain counter)**
+   Instead of walking each board's set bits individually with `int.bit_length()`
+   (one Python method call per set bit per board), the counting step maintains
+   an array of counter ints where `counter[j]` holds the *j*-th bit of the
+   per-tile count for **every** tile position simultaneously. Adding a board is
+   a carry chain of AND/XOR operations on full-width Python ints. This replaces
+   a large number of Python-level method calls with a small number of C-level
+   bigint operations, dramatically speeding up the hottest loop.
+
+2. **Cython board generation (`_fast_board.pyx`)**
+   The rejection-sampling inner loop is replaced by a compiled Cython module
+   using 128-bit bitboards (two `uint64_t` fields) and a xorshift64* PRNG.
+   Runs entirely with the GIL released. Provides an order-of-magnitude speedup
+   on board generation compared to the pure-Python path.
+
+3. **Incremental board filtering**
+   On each turn, previously sampled boards are filtered against the new game
+   state with a single bitwise check per board (`b & misses_bit` or
+   `b & hits_bit == hits_bit`). Only the deficit is regenerated, so turns that
+   change little state avoid redundant sampling.
+
+4. **Ship-position pruning (constraint propagation)**
+   After every shot, impossible ship placements are removed from
+   `poss_ships[name]` using bitwise overlap checks. This shrinks the search
+   space for future board generation, making rejection sampling accept faster
+   as the game progresses.
+
+5. **Placement ordering by constraint tightness**
+   Ships are sorted by their remaining number of legal placements before
+   generation. Placing the most constrained ship first maximises early
+   rejection, reducing wasted work in the inner loop.
+
+6. **Bitboard representation throughout**
+   All ship placements, hits, misses, and sampled boards are encoded as single
+   Python ints. Overlap tests (`a & b`), unions (`a | b`), and membership
+   checks compile down to fast C-level bigint operations, avoiding set/dict
+   overhead entirely.
 
 ## Running tests
 
